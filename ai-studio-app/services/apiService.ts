@@ -6,7 +6,8 @@ import { loadAccountsData, saveAccountsData } from './storageService';
 // --- API IMPLEMENTATION (as per handoff document) ---
 
 // Use the absolute backend URL to bypass local proxy issues and fix 404 errors.
-const API_BASE_URL = 'https://teller10-15a.onrender.com/api';
+const envApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
+const API_BASE_URL = (envApiBaseUrl || '/api').replace(/\/$/, '');
 
 /**
  * A robust map to translate backend account IDs (e.g., 'acc_llc_checking') 
