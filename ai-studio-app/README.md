@@ -15,6 +15,10 @@ View your app in AI Studio: https://ai.studio/apps/drive/1_aFqfLkVlm4DT57oKJ5BTF
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Set the `VITE_GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key. Optionally configure `VITE_API_BASE_URL` if you need to point at a custom Teller backend.
+3. Run the app for local development:
    `npm run dev`
+4. Build the production bundle:
+   `npm run build`
+5. Serve the production build (includes the Teller proxy backend):
+   `npm start`
