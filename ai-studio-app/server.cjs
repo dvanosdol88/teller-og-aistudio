@@ -5,10 +5,10 @@ const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const path = require('path');
 const fs = require('fs');
-const { getAccounts, getAccountById, getBalanceByAccountId, getTransactionsByAccountId } = require('./lib/dataStore');
-const { PgManualDataStore } = require('./lib/pgManualDataStore');
-const { ManualFieldsStore } = require('./lib/manualFieldsStore');
-const { SlugManualStore, LIABILITY_SLUGS, ASSET_SLUG } = require('./lib/slugManualStore');
+const { getAccounts, getAccountById, getBalanceByAccountId, getTransactionsByAccountId } = require('./lib/dataStore.cjs');
+const { PgManualDataStore } = require('./lib/pgManualDataStore.cjs');
+const { ManualFieldsStore } = require('./lib/manualFieldsStore.cjs');
+const { SlugManualStore, LIABILITY_SLUGS, ASSET_SLUG } = require('./lib/slugManualStore.cjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
