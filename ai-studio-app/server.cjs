@@ -24,9 +24,28 @@ const DATABASE_URL = process.env.DATABASE_URL;
 function buildProxyHeaders() {
   const headerMap = new Map();
 
+  const normalizeValue = (value) => {
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return '';
+    }
+
+    const startsWithQuote = trimmed.startsWith('"') || trimmed.startsWith("'");
+    const endsWithQuote = trimmed.endsWith('"') || trimmed.endsWith("'");
+    if (trimmed.length >= 2 && startsWithQuote && endsWithQuote) {
+      return trimmed.slice(1, -1).trim();
+    }
+
+    return trimmed;
+  };
+
   const addHeader = (rawKey, rawValue) => {
     if (!rawKey) return;
-    const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+    const value = normalizeValue(rawValue);
     if (!value) return;
     const normalizedKey = String(rawKey).toLowerCase();
     headerMap.set(normalizedKey, { key: rawKey, value });
@@ -56,6 +75,10 @@ function buildProxyHeaders() {
 
   if (process.env.BACKEND_PROXY_AUTHORIZATION) {
     addHeader('Authorization', process.env.BACKEND_PROXY_AUTHORIZATION);
+  }
+
+  if (process.env.BACKEND_AUTH_HEADER && process.env.BACKEND_AUTH_VALUE) {
+    addHeader(process.env.BACKEND_AUTH_HEADER, process.env.BACKEND_AUTH_VALUE);
   }
 
   return Array.from(headerMap.values());
