@@ -5,6 +5,7 @@ const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const path = require('path');
 const fs = require('fs');
+const { spawnSync } = require('child_process');
 const { getAccounts, getAccountById, getBalanceByAccountId, getTransactionsByAccountId } = require('./lib/dataStore.cjs');
 const { PgManualDataStore } = require('./lib/pgManualDataStore.cjs');
 const { ManualFieldsStore } = require('./lib/manualFieldsStore.cjs');
@@ -655,14 +656,59 @@ app.use('/api', createProxyMiddleware({
 }));
 
 const staticDir = path.join(__dirname, 'dist');
-if (!fs.existsSync(staticDir)) {
-  console.warn(`[server] Static directory not found at ${staticDir}. Run "npm run build" to generate the frontend assets.`);
-}
-app.use(express.static(staticDir));
+const indexHtmlPath = path.join(staticDir, 'index.html');
+const shouldAutoBuild = String(process.env.AUTO_BUILD_STATIC || 'true').toLowerCase() !== 'false';
 
-app.get('*', (req, res) => {
-  res.sendFile(path.join(staticDir, 'index.html'));
-});
+function ensureStaticAssets() {
+  if (fs.existsSync(indexHtmlPath)) {
+    return true;
+  }
+
+  console.warn(`[server] Frontend build missing at ${indexHtmlPath}`);
+  if (!shouldAutoBuild) {
+    console.warn('[server] Automatic build is disabled (AUTO_BUILD_STATIC=false).');
+    return false;
+  }
+
+  console.log('[server] Running "npm run build" to generate static assets...');
+  const result = spawnSync('npm', ['run', 'build'], {
+    stdio: 'inherit',
+    env: process.env,
+    cwd: __dirname
+  });
+
+  if (result.error) {
+    console.error('[server] Failed to spawn build process:', result.error.message);
+    return false;
+  }
+
+  if (result.status !== 0) {
+    console.error(`[server] Build process exited with code ${result.status}.`);
+    return false;
+  }
+
+  if (!fs.existsSync(indexHtmlPath)) {
+    console.error('[server] Build completed but index.html is still missing.');
+    return false;
+  }
+
+  console.log('[server] Static assets generated successfully.');
+  return true;
+}
+
+const hasStaticAssets = ensureStaticAssets();
+
+if (hasStaticAssets) {
+  app.use(express.static(staticDir));
+
+  app.get('*', (req, res) => {
+    res.sendFile(indexHtmlPath);
+  });
+} else {
+  app.get('*', (req, res) => {
+    res.status(503).send('Frontend assets are unavailable. Ensure "npm run build" completes successfully.');
+  });
+}
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[server] Server running on http://0.0.0.0:${PORT}`);
