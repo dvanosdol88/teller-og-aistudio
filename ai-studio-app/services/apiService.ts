@@ -10,21 +10,107 @@ const envApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const API_BASE_URL = (envApiBaseUrl || '/api').replace(/\/$/, '');
 
 /**
- * A robust map to translate backend account IDs (e.g., 'acc_llc_checking') 
+ * Normalises a string key for comparison (trim + lowercase).
+ */
+const normalizeKey = (value: string | null | undefined) =>
+    (value ?? '').trim().toLowerCase();
+
+/**
+ * Optionally supplied mapping from backend account IDs to the app's AccountId keys.
+ * The value is expected to be JSON where keys are backend IDs and values are AccountIds.
+ */
+const envBackendIdMapRaw = (import.meta.env.VITE_BACKEND_ACCOUNT_ID_MAP || '').trim();
+
+let ENV_BACKEND_ID_TO_ACCOUNT_ID_MAP: Partial<Record<string, AccountId>> = {};
+if (envBackendIdMapRaw) {
+    try {
+        const parsed = JSON.parse(envBackendIdMapRaw);
+        if (typeof parsed === 'object' && parsed !== null) {
+            ENV_BACKEND_ID_TO_ACCOUNT_ID_MAP = Object.entries(parsed).reduce(
+                (acc, [backendId, accountId]) => {
+                    if (typeof backendId === 'string' && typeof accountId === 'string') {
+                        acc[backendId] = accountId as AccountId;
+                    }
+                    return acc;
+                },
+                {} as Partial<Record<string, AccountId>>
+            );
+        }
+    } catch (error) {
+        console.warn('VITE_BACKEND_ACCOUNT_ID_MAP is not valid JSON. Ignoring the environment override.', error);
+    }
+}
+
+/**
+ * A robust map to translate backend account IDs (e.g., 'acc_llc_checking')
  * to the frontend's internal AccountId keys (e.g., 'llcBank'). This is the
  * source of truth for linking API data to the UI.
  */
-const BACKEND_ID_TO_ACCOUNT_ID_MAP: { [key: string]: AccountId } = {
+const DEFAULT_BACKEND_ID_TO_ACCOUNT_ID_MAP: Partial<Record<string, AccountId>> = {
+    // Legacy demo identifiers retained for offline mode and historical data sets
     'acc_julie_personal': 'juliePersonalFinances',
     'acc_david_personal': 'davidPersonalFinances',
     'acc_llc_checking': 'llcBank',
+    'acc_llc_operating': 'llcBank',
     'acc_llc_savings': 'llcSavings',
+    'acc_llc_reserve': 'llcSavings',
     'acc_heloc_loan': 'helocLoan',
     'acc_member_loan_roof': 'memberLoan',
     'acc_mortgage_loan': 'mortgageLoan',
     'acc_property_asset': 'propertyAsset',
     'acc_rent_roll': 'rent'
-    // Note: 'acc_llc_credit' from backend is not mapped as it doesn't have a corresponding UI component.
+};
+
+const BACKEND_ID_TO_ACCOUNT_ID_MAP: Partial<Record<string, AccountId>> = {
+    ...DEFAULT_BACKEND_ID_TO_ACCOUNT_ID_MAP,
+    ...ENV_BACKEND_ID_TO_ACCOUNT_ID_MAP
+};
+
+const BACKEND_NAME_TO_ACCOUNT_ID_MAP: Partial<Record<string, AccountId>> = {
+    'julie personal finances': 'juliePersonalFinances',
+    'david personal finances': 'davidPersonalFinances',
+    'llc operating checking': 'llcBank',
+    'llc reserve savings': 'llcSavings',
+    'llc savings': 'llcSavings',
+    'heloc loan': 'helocLoan',
+    'member loan (roof)': 'memberLoan',
+    'member loan roof': 'memberLoan',
+    '672 elm st. mortgage': 'mortgageLoan',
+    '672 elm st mortgage': 'mortgageLoan',
+    '672 elm st': 'propertyAsset',
+    'rent roll': 'rent'
+};
+
+const BACKEND_LAST4_TO_ACCOUNT_ID_MAP: Partial<Record<string, AccountId>> = {
+    '7123': 'llcBank',
+    '0441': 'llcSavings',
+    '8899': 'helocLoan',
+    '3001': 'propertyAsset'
+};
+
+/**
+ * Resolves the UI AccountId for a backend account by checking:
+ *   1. Direct ID mappings (env override wins)
+ *   2. Account name heuristics
+ *   3. Last four digits of the account number
+ */
+const resolveAccountId = (baseAccount: BackendAccount): AccountId | null => {
+    const directMatch = BACKEND_ID_TO_ACCOUNT_ID_MAP[baseAccount.id];
+    if (directMatch) {
+        return directMatch;
+    }
+
+    const nameMatch = BACKEND_NAME_TO_ACCOUNT_ID_MAP[normalizeKey(baseAccount.name)];
+    if (nameMatch) {
+        return nameMatch;
+    }
+
+    const lastFourMatch = BACKEND_LAST4_TO_ACCOUNT_ID_MAP[normalizeKey(baseAccount.last_four)];
+    if (lastFourMatch) {
+        return lastFourMatch;
+    }
+
+    return null;
 };
 
 
@@ -63,11 +149,12 @@ async function handleApiResponse(response: Response) {
 }
 
 interface BackendAccount {
-    id: AccountId;
-    name: string;
-    subtitle: string;
-    type: string;
-    balance: number | null;
+    id: string;
+    name?: string;
+    subtitle?: string;
+    type?: string;
+    balance?: number | null;
+    last_four?: string | null;
 }
 
 /**
@@ -100,10 +187,12 @@ const fetchBackendData = async (): Promise<Partial<AccountsData>> => {
 
         const [balanceData, transactionsData] = await Promise.all([balancePromise, transactionsPromise]);
         
-        const localAccountId = BACKEND_ID_TO_ACCOUNT_ID_MAP[baseAccount.id as string];
+        const localAccountId = resolveAccountId(baseAccount as BackendAccount);
 
         if (!localAccountId) {
-            console.warn(`Backend account ID "${baseAccount.id}" (name: "${baseAccount.name}") is not mapped to a frontend account and will be ignored.`);
+            console.warn(
+                `Backend account ID "${baseAccount.id}" (name: "${baseAccount.name}") could not be mapped to a frontend account via ID, name, or last_four. Set VITE_BACKEND_ACCOUNT_ID_MAP if you need to link it.`
+            );
             return [null, null];
         }
         
