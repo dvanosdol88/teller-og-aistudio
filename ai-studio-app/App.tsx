@@ -15,28 +15,42 @@ const App: React.FC = () => {
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
     const [selectedAccountId, setSelectedAccountId] = useState<AccountId | 'totalEquity' | null>(null);
+    const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+    const loadData = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+        try {
+            setError(null);
+            if (silent) {
+                setIsRefreshing(true);
+            } else {
+                setIsLoading(true);
+            }
+            const data = await fetchAccountsData();
+            setAccountsData(data);
+        } catch (err) {
+            const errorMessage = err instanceof Error
+                ? `Failed to load live data: ${err.message}. Displaying cached data as a fallback.`
+                : "An unknown error occurred while loading data. Displaying cached data as a fallback.";
+            setError(errorMessage);
+            setAccountsData(initialAccountsData); // Fallback to cached data on error
+            console.error(err);
+        } finally {
+            if (silent) {
+                setIsRefreshing(false);
+            } else {
+                setIsLoading(false);
+            }
+        }
+    }, []);
 
     // Fetch data from the backend API when the component mounts.
     useEffect(() => {
-        const loadData = async () => {
-            try {
-                setError(null);
-                setIsLoading(true);
-                const data = await fetchAccountsData();
-                setAccountsData(data);
-            } catch (err) {
-                const errorMessage = err instanceof Error 
-                    ? `Failed to load live data: ${err.message}. Displaying cached data as a fallback.`
-                    : "An unknown error occurred while loading data. Displaying cached data as a fallback.";
-                setError(errorMessage);
-                setAccountsData(initialAccountsData); // Fallback to cached data on error
-                console.error(err);
-            } finally {
-                setIsLoading(false);
-            }
-        };
         loadData();
-    }, []);
+    }, [loadData]);
+
+    const handleRefreshLiveData = useCallback(async () => {
+        await loadData({ silent: true });
+    }, [loadData]);
 
     const calculateTotalEquity = useCallback(() => {
         if (!accountsData) return 0;
@@ -97,7 +111,7 @@ const App: React.FC = () => {
     
     return (
         <>
-            <Header />
+            <Header onRefreshLiveData={handleRefreshLiveData} isRefreshing={isRefreshing} />
             {accountsData && (
                  <main className="container mx-auto px-6 py-12">
                     {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}

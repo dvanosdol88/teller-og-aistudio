@@ -21,6 +21,56 @@ const MANUAL_DATA_DRY_RUN = String(process.env.MANUAL_DATA_DRY_RUN || '').toLowe
 const MANUAL_DATA_MIGRATION_SECRET = process.env.MANUAL_DATA_MIGRATION_SECRET || '';
 const DATABASE_URL = process.env.DATABASE_URL;
 
+function buildProxyHeaders() {
+  const headerMap = new Map();
+
+  const addHeader = (rawKey, rawValue) => {
+    if (!rawKey) return;
+    const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+    if (!value) return;
+    const normalizedKey = String(rawKey).toLowerCase();
+    headerMap.set(normalizedKey, { key: rawKey, value });
+  };
+
+  const jsonHeadersRaw = process.env.BACKEND_PROXY_HEADERS;
+  if (jsonHeadersRaw) {
+    try {
+      const parsed = JSON.parse(jsonHeadersRaw);
+      if (parsed && typeof parsed === 'object') {
+        for (const [rawKey, rawValue] of Object.entries(parsed)) {
+          addHeader(rawKey, rawValue);
+        }
+      }
+    } catch (error) {
+      console.warn(`[proxy] Failed to parse BACKEND_PROXY_HEADERS JSON: ${error.message}`);
+    }
+  }
+
+  if (process.env.BACKEND_PROXY_API_KEY) {
+    addHeader('x-api-key', process.env.BACKEND_PROXY_API_KEY);
+  }
+
+  if (process.env.BACKEND_BEARER_TOKEN) {
+    addHeader('Authorization', `Bearer ${process.env.BACKEND_BEARER_TOKEN}`);
+  }
+
+  if (process.env.BACKEND_PROXY_AUTHORIZATION) {
+    addHeader('Authorization', process.env.BACKEND_PROXY_AUTHORIZATION);
+  }
+
+  return Array.from(headerMap.values());
+}
+
+const PROXY_HEADER_OVERRIDES = buildProxyHeaders();
+
+function withProxyHeaders(base = {}) {
+  const next = { ...base };
+  for (const { key, value } of PROXY_HEADER_OVERRIDES) {
+    next[key] = value;
+  }
+  return next;
+}
+
 const BASE_CONFIG = {
   apiBaseUrl: '/api',
   FEATURE_USE_BACKEND: true,
@@ -156,7 +206,7 @@ async function fetchBackendConfig() {
 
   try {
     const response = await fetch(`${BACKEND_URL}/api/config`, {
-      headers: { Accept: 'application/json' },
+      headers: withProxyHeaders({ Accept: 'application/json' }),
       signal: controller.signal
     });
 
@@ -177,6 +227,11 @@ console.log(`[server] Starting proxy server on port ${PORT}`);
 console.log(`[server] Backend URL: ${BACKEND_URL}`);
 console.log(`[server] FEATURE_MANUAL_DATA: ${FEATURE_MANUAL_DATA}`);
 console.log(`[server] FEATURE_STATIC_DB: ${FEATURE_STATIC_DB}`);
+if (PROXY_HEADER_OVERRIDES.length) {
+  console.log(`[server] Proxy auth headers enabled: ${PROXY_HEADER_OVERRIDES.map((h) => h.key).join(', ')}`);
+} else {
+  console.log('[server] Proxy auth headers disabled');
+}
 if (FEATURE_MANUAL_DATA) {
   console.log(`[server] MANUAL_DATA_READONLY: ${MANUAL_DATA_READONLY}`);
   console.log(`[server] MANUAL_DATA_DRY_RUN: ${MANUAL_DATA_DRY_RUN}`);
@@ -620,6 +675,11 @@ app.use('/api', createProxyMiddleware({
   },
   onProxyReq: (proxyReq, req, res) => {
     console.log(`[proxy] ${req.method} ${req.url} -> ${BACKEND_URL}${req.url}`);
+    if (PROXY_HEADER_OVERRIDES.length) {
+      for (const { key, value } of PROXY_HEADER_OVERRIDES) {
+        proxyReq.setHeader(key, value);
+      }
+    }
     if (req.readable === false && req.body !== undefined) {
       let payloadBuffer = null;
 

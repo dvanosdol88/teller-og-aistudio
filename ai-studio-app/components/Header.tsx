@@ -1,6 +1,12 @@
 import React from 'react';
+import TellerConnectButton from './TellerConnectButton';
 
-const Header: React.FC = () => {
+interface HeaderProps {
+    onRefreshLiveData?: () => Promise<void> | void;
+    isRefreshing?: boolean;
+}
+
+const Header: React.FC<HeaderProps> = ({ onRefreshLiveData, isRefreshing = false }) => {
     return (
         <header className="bg-white shadow-sm sticky top-0 z-40">
             <nav className="container mx-auto px-6 py-4 flex justify-between items-center">
@@ -10,6 +16,7 @@ const Header: React.FC = () => {
                      <a href="#ai-insights" className="text-slate-600 hover:text-slate-900">✨ AI Insights</a>
                      <a href="#principles" className="text-slate-600 hover:text-slate-900">Principles</a>
                      <a href="https://drive.google.com/drive/folders/1DcRgHqcQ_9xvtsPAw-mXddEJswe6icxU?usp=sharing" target="_blank" rel="noopener noreferrer" className="bg-blue-50 text-blue-700 font-semibold py-2 px-4 rounded-lg hover:bg-blue-100 transition-colors">📁 Real Estate Drive</a>
+                     <TellerConnectButton onConnected={onRefreshLiveData} disabled={isRefreshing} />
                 </div>
             </nav>
         </header>
