@@ -186,7 +186,7 @@ const fetchBackendData = async (): Promise<Partial<AccountsData>> => {
             });
 
         const [balanceData, transactionsData] = await Promise.all([balancePromise, transactionsPromise]);
-        
+
         const localAccountId = resolveAccountId(baseAccount as BackendAccount);
 
         if (!localAccountId) {
@@ -202,7 +202,13 @@ const fetchBackendData = async (): Promise<Partial<AccountsData>> => {
             balance: balanceData?.balance ?? baseAccount.balance,
             transactions: (transactionsData?.transactions as Transaction[] ?? [])
         };
-        
+
+        console.log('API CALL: Received Teller data', {
+            account_id: accountId,
+            mapped_account_id: localAccountId,
+            transaction_count: liveBankData.transactions.length
+        });
+
         return [localAccountId, liveBankData];
     });
 
