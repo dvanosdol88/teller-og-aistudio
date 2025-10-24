@@ -6,6 +6,9 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 const path = require('path');
 const fs = require('fs');
 const { spawnSync } = require('child_process');
+const http = require('http');
+const https = require('https');
+const { URL } = require('url');
 const { getAccounts, getAccountById, getBalanceByAccountId, getTransactionsByAccountId } = require('./lib/dataStore.cjs');
 const { PgManualDataStore } = require('./lib/pgManualDataStore.cjs');
 const { ManualFieldsStore } = require('./lib/manualFieldsStore.cjs');
@@ -299,6 +302,127 @@ app.use((req, res, next) => {
 });
 
 const jsonParser = express.json({ limit: '1mb' });
+
+function buildEnrollmentProxyHeaders(req) {
+  const headers = {};
+  const incomingHeaders = req.headers || {};
+  for (const [rawKey, rawValue] of Object.entries(incomingHeaders)) {
+    if (rawValue === undefined) continue;
+    const key = rawKey.toLowerCase();
+    if (key === 'host') continue;
+    if (key === 'connection') continue;
+    if (key === 'content-length') continue;
+    headers[rawKey] = Array.isArray(rawValue) ? rawValue.join(', ') : rawValue;
+  }
+
+  const authHeader = req.headers?.authorization;
+  if (authHeader) {
+    headers.Authorization = authHeader;
+  }
+
+  if (req.requestId) {
+    headers['x-request-id'] = req.requestId;
+  }
+
+  for (const { key, value } of PROXY_HEADER_OVERRIDES) {
+    if (!key) continue;
+    if (typeof value === 'undefined') continue;
+    if (key.toLowerCase() === 'authorization' && authHeader) {
+      continue;
+    }
+    headers[key] = value;
+  }
+
+  return headers;
+}
+
+function proxyEnrollmentRequest(req, res) {
+  const targetUrl = new URL('/api/enrollments', BACKEND_URL);
+  const client = targetUrl.protocol === 'https:' ? https : http;
+  const headers = buildEnrollmentProxyHeaders(req);
+
+  console.log(
+    `[enrollment-proxy] Forwarding ${req.method} ${req.originalUrl} to ${targetUrl.href}`
+  );
+
+  const backendReq = client.request(
+    {
+      protocol: targetUrl.protocol,
+      hostname: targetUrl.hostname,
+      port: targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80),
+      path: `${targetUrl.pathname}${targetUrl.search}`,
+      method: 'POST',
+      headers
+    },
+    (backendRes) => {
+      const statusCode = backendRes.statusCode || 502;
+      if (statusCode >= 400) {
+        console.warn(
+          `[enrollment-proxy] Backend responded with status ${statusCode}`
+        );
+      }
+
+      res.status(statusCode);
+      for (const [key, value] of Object.entries(backendRes.headers || {})) {
+        if (typeof value === 'undefined') continue;
+        if (key.toLowerCase() === 'connection') continue;
+        res.setHeader(key, value);
+      }
+
+      backendRes.on('error', (streamError) => {
+        console.error(
+          `[enrollment-proxy] Error streaming backend response: ${streamError.message}`
+        );
+        if (!res.headersSent) {
+          res
+            .status(502)
+            .json({
+              error: 'enrollment_proxy_stream_failed',
+              message: streamError.message,
+              request_id: req.requestId
+            });
+        } else {
+          res.end();
+        }
+      });
+
+      backendRes.pipe(res);
+    }
+  );
+
+  backendReq.on('error', (error) => {
+    console.error(
+      `[enrollment-proxy] Failed to forward enrollment: ${error.message}`
+    );
+    req.unpipe(backendReq);
+    req.resume();
+    if (!res.headersSent) {
+      res.status(502).json({
+        error: 'enrollment_proxy_failed',
+        message: error.message,
+        request_id: req.requestId
+      });
+    } else {
+      res.end();
+    }
+  });
+
+  backendReq.setTimeout(30000, () => {
+    backendReq.destroy(new Error('Enrollment proxy request timed out'));
+  });
+
+  req.on('aborted', () => {
+    backendReq.destroy(new Error('Client aborted enrollment request'));
+  });
+
+  res.on('close', () => {
+    if (!backendReq.destroyed) {
+      backendReq.destroy();
+    }
+  });
+
+  req.pipe(backendReq);
+}
 
 app.get('/api/config', async (req, res) => {
   try {
@@ -714,6 +838,10 @@ app.put('/api/manual/assets/property_672_elm_value', jsonParser, async (req, res
   } catch (e) {
     res.status(400).json({ error: 'validation_failed', message: e.message });
   }
+});
+
+app.post('/api/enrollments', (req, res) => {
+  proxyEnrollmentRequest(req, res);
 });
 
 // Backend proxy (registered AFTER local manual routes)

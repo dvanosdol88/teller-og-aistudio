@@ -22,3 +22,8 @@ View your app in AI Studio: https://ai.studio/apps/drive/1_aFqfLkVlm4DT57oKJ5BTF
    `npm run build`
 5. Serve the production build (includes the Teller proxy backend):
    `npm start`
+
+## Proxy endpoints
+
+- `GET /api/config` – fetch Teller backend configuration (falls back to static defaults)
+- `POST /api/enrollments` – forwards enrollment payloads to `${BACKEND_URL}/api/enrollments`, preserving the caller's `Authorization` header and streaming the upstream response

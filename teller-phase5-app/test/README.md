@@ -4,6 +4,9 @@
 
 Automated test suite for the manual data endpoints.
 
+> ℹ️ New: `npm test` and `npm run test:proxy` execute `test/enrollment-proxy.test.js`, a mocked regression that boots the proxy
+> against a local HTTP double to ensure `POST /api/enrollments` forwards payloads and the `Authorization` header correctly.
+
 Additional focused tests are available for manual liabilities/assets summary and write gating.
 
 ### Usage

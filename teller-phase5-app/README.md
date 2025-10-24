@@ -117,6 +117,17 @@ CREATE TABLE manual_data (
 );
 ```
 
+### Enrollment onboarding proxy
+
+The proxy now exposes a passthrough for the Teller enrollment API:
+
+- `POST /api/enrollments` → forwards to `${BACKEND_URL}/api/enrollments`
+  - Preserves the caller's `Authorization` header (unless overridden by env-based proxy auth)
+  - Streams the backend response, including status codes and headers
+  - Emits structured logs and returns a 5xx if the upstream request cannot be completed
+
+This keeps enrollment flows working in environments where the frontend only talks to the proxy origin.
+
 ## Testing
 
 **NEW: Automated API Integration Tests** ✅
@@ -134,6 +145,8 @@ npm run test:verbose
 # Test local development server
 npm run test:local
 ```
+
+`npm test` now runs a mocked regression (`node test/enrollment-proxy.test.js`) before the external integration checks to ensure the enrollment proxy relays payloads and authorization correctly.
 
 **Current Status:** See [DEPLOYMENT_STATUS.md](DEPLOYMENT_STATUS.md) for latest test results and deployment verification.
 
