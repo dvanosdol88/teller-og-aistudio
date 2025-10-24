@@ -84,6 +84,18 @@ const TellerConnectButton: React.FC<TellerConnectButtonProps> = ({ onConnected, 
         try {
             await openTellerConnect({
                 onSuccess: async (enrollment) => {
+                    const tellerActivityLog = {
+                        enrollment_id: enrollment.enrollmentId ?? null,
+                        account_ids: Array.isArray((enrollment as any)?.accounts)
+                            ? (enrollment as any).accounts
+                                  .map((account: any) => account?.id || account?.account_id)
+                                  .filter(Boolean)
+                            : undefined,
+                        token_preview: enrollment.accessToken
+                            ? `${enrollment.accessToken.slice(0, 6)}…`
+                            : null,
+                    };
+                    console.log('[TellerConnect] Enrollment received', tellerActivityLog);
                     setStatusMessage('Connection successful. Syncing latest balances...');
                     persistEnrollment(enrollment);
                     await postEnrollmentToBackend(enrollment);
