@@ -3,6 +3,18 @@ import { initialAccountsData } from '../data/initialData';
 import { Account, AccountId, AccountsData, Transaction } from '../types';
 import { loadAccountsData, saveAccountsData } from './storageService';
 
+class ApiError extends Error {
+    status: number;
+    details?: unknown;
+
+    constructor(message: string, status: number, details?: unknown) {
+        super(message);
+        this.name = 'ApiError';
+        this.status = status;
+        this.details = details;
+    }
+}
+
 // --- API IMPLEMENTATION (as per handoff document) ---
 
 // Use the absolute backend URL to bypass local proxy issues and fix 404 errors.
@@ -58,6 +70,7 @@ const DEFAULT_BACKEND_ID_TO_ACCOUNT_ID_MAP: Partial<Record<string, AccountId>> =
     'acc_member_loan_roof': 'memberLoan',
     'acc_mortgage_loan': 'mortgageLoan',
     'acc_property_asset': 'propertyAsset',
+    'acc_property_tax': 'llcSavings',
     'acc_rent_roll': 'rent'
 };
 
@@ -65,6 +78,22 @@ const BACKEND_ID_TO_ACCOUNT_ID_MAP: Partial<Record<string, AccountId>> = {
     ...DEFAULT_BACKEND_ID_TO_ACCOUNT_ID_MAP,
     ...ENV_BACKEND_ID_TO_ACCOUNT_ID_MAP
 };
+
+const STATIC_DATASET_ACCOUNT_IDS = new Set<string>([
+    'acc_julie_personal',
+    'acc_david_personal',
+    'acc_llc_checking',
+    'acc_llc_operating',
+    'acc_llc_savings',
+    'acc_llc_reserve',
+    'acc_llc_credit',
+    'acc_heloc_loan',
+    'acc_member_loan_roof',
+    'acc_mortgage_loan',
+    'acc_property_asset',
+    'acc_property_tax',
+    'acc_rent_roll'
+]);
 
 const BACKEND_NAME_TO_ACCOUNT_ID_MAP: Partial<Record<string, AccountId>> = {
     'julie personal finances': 'juliePersonalFinances',
@@ -132,15 +161,17 @@ async function checkOnlineStatus() {
 async function handleApiResponse(response: Response) {
     if (!response.ok) {
         let errorMessage = `API Error: ${response.status} ${response.statusText}`;
+        let errorDetails: unknown = null;
         try {
             // Try to parse a JSON error body, if available
             const errorBody = await response.json();
+            errorDetails = errorBody;
             errorMessage = errorBody.error || errorBody.message || errorMessage;
         } catch (e) { /* Ignore if response body isn't valid JSON */ }
 
-        throw new Error(errorMessage);
+        throw new ApiError(errorMessage, response.status, errorDetails);
     }
-    
+
     const contentType = response.headers.get('content-type');
     if (contentType && contentType.includes('application/json')) {
       return response.json();
@@ -155,6 +186,11 @@ interface BackendAccount {
     type?: string;
     balance?: number | null;
     last_four?: string | null;
+    provider?: string | null;
+    provider_account_id?: string | null;
+    teller_account_id?: string | null;
+    account_id?: string | null;
+    [key: string]: unknown;
 }
 
 /**
@@ -170,18 +206,31 @@ const fetchBackendData = async (): Promise<Partial<AccountsData>> => {
 
     const accountPromises = (baseAccounts as BackendAccount[]).map(async (baseAccount) => {
         const accountId = baseAccount.id;
+        const isStaticDatasetAccount = STATIC_DATASET_ACCOUNT_IDS.has(accountId);
 
         const balancePromise = fetch(`${API_BASE_URL}/db/accounts/${accountId}/balances`)
             .then(handleApiResponse)
             .catch(err => {
-                console.error(`Failed to fetch balance for ${accountId}:`, err);
+                if (err instanceof ApiError && err.status === 404 && isStaticDatasetAccount) {
+                    console.info(`Balances endpoint missing for demo dataset account ${accountId}; continuing with cached data.`);
+                } else {
+                    console.error(`Failed to fetch balance for ${accountId}:`, err);
+                }
                 return null; // Return null on failure
             });
-        
+
         const transactionsPromise = fetch(`${API_BASE_URL}/db/accounts/${accountId}/transactions?limit=100`)
             .then(handleApiResponse)
             .catch(err => {
-                console.error(`Failed to fetch transactions for ${accountId}:`, err);
+                if (err instanceof ApiError && err.status === 404) {
+                    if (isStaticDatasetAccount) {
+                        console.info(`Transactions endpoint missing for demo dataset account ${accountId}; skipping.`);
+                    } else {
+                        console.warn(`Transactions endpoint returned 404 for ${accountId}.`, err.details ?? err.message);
+                    }
+                } else {
+                    console.error(`Failed to fetch transactions for ${accountId}:`, err);
+                }
                 return { transactions: [] }; // Return empty transactions on failure
             });
 
@@ -195,7 +244,7 @@ const fetchBackendData = async (): Promise<Partial<AccountsData>> => {
             );
             return [null, null];
         }
-        
+
         // **FIX:** Isolate ONLY the live, non-editable data from the backend.
         // This prevents overwriting user-editable fields like 'name' or 'subtitle'.
         const liveBankData = {
@@ -203,11 +252,30 @@ const fetchBackendData = async (): Promise<Partial<AccountsData>> => {
             transactions: (transactionsData?.transactions as Transaction[] ?? [])
         };
 
-        console.log('API CALL: Received Teller data', {
-            account_id: accountId,
+        const tellerAccountId = [
+            baseAccount.teller_account_id,
+            baseAccount.provider_account_id,
+            baseAccount.account_id
+        ].find((value) => typeof value === 'string' && value.trim());
+
+        const logPayload: Record<string, unknown> = {
+            backend_account_id: accountId,
             mapped_account_id: localAccountId,
-            transaction_count: liveBankData.transactions.length
-        });
+            transaction_count: liveBankData.transactions.length,
+            last_four: baseAccount.last_four ?? null,
+        };
+
+        if (tellerAccountId) {
+            logPayload.teller_account_id = tellerAccountId;
+        }
+
+        if (isStaticDatasetAccount) {
+            logPayload.source = baseAccount.provider ?? 'demo-dataset';
+            console.log('API CALL: Using static dashboard dataset account', logPayload);
+        } else {
+            logPayload.provider = baseAccount.provider ?? 'teller';
+            console.log('API CALL: Received Teller account payload', logPayload);
+        }
 
         return [localAccountId, liveBankData];
     });
