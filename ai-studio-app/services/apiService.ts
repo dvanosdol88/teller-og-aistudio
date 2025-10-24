@@ -117,6 +117,172 @@ const BACKEND_LAST4_TO_ACCOUNT_ID_MAP: Partial<Record<string, AccountId>> = {
     '3001': 'propertyAsset'
 };
 
+const ACCOUNT_TYPE_KEYS = ['type', 'account_type'] as const;
+const ACCOUNT_SUBTYPE_KEYS = ['subtype', 'account_subtype', 'sub_type'] as const;
+
+const gatherIdentityCandidates = (account: BackendAccount): string[] => {
+    const rawCandidates = [
+        account.id,
+        account.account_id,
+        account.teller_account_id,
+        account.provider_account_id
+    ];
+
+    const metadata = account.metadata;
+    if (metadata && typeof metadata === 'object') {
+        const metadataRecord = metadata as Record<string, unknown>;
+        for (const key of ['account_id', 'provider_account_id', 'teller_account_id']) {
+            const value = metadataRecord[key];
+            if (typeof value === 'string') {
+                rawCandidates.push(value);
+            }
+        }
+    }
+
+    return Array.from(
+        new Set(
+            rawCandidates
+                .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+                .map((value) => value.trim())
+        )
+    );
+};
+
+const extractStringFromKeys = (account: BackendAccount, keys: readonly string[]): string | null => {
+    for (const key of keys) {
+        const value = account[key];
+        if (typeof value === 'string' && value.trim()) {
+            return value;
+        }
+        if (value && typeof value === 'object') {
+            if (typeof (value as Record<string, unknown>).name === 'string') {
+                return (value as Record<string, unknown>).name as string;
+            }
+            if (typeof (value as Record<string, unknown>).display_name === 'string') {
+                return (value as Record<string, unknown>).display_name as string;
+            }
+        }
+    }
+    return null;
+};
+
+const getNormalizedType = (account: BackendAccount): string => {
+    const typeCandidate = extractStringFromKeys(account, ACCOUNT_TYPE_KEYS);
+    return normalizeKey(typeCandidate ?? undefined);
+};
+
+const getNormalizedSubtype = (account: BackendAccount): string => {
+    const subtypeCandidate = extractStringFromKeys(account, ACCOUNT_SUBTYPE_KEYS);
+    return normalizeKey(subtypeCandidate ?? undefined);
+};
+
+const getNameCandidates = (account: BackendAccount): string[] => {
+    const candidates = [
+        account.name,
+        account.subtitle,
+        (account as Record<string, unknown>).official_name as string | undefined,
+        (account as Record<string, unknown>).display_name as string | undefined
+    ];
+    return candidates
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map((value) => normalizeKey(value));
+};
+
+const getInstitutionNames = (account: BackendAccount): string[] => {
+    const institutionCandidates: Array<string | undefined> = [
+        account.provider,
+        account.provider_name,
+        account.institution_name,
+        typeof account.institution === 'string' ? (account.institution as string) : undefined
+    ];
+
+    if (account.institution && typeof account.institution === 'object') {
+        const institution = account.institution as Record<string, unknown>;
+        if (typeof institution.name === 'string') {
+            institutionCandidates.push(institution.name);
+        }
+        if (typeof institution.display_name === 'string') {
+            institutionCandidates.push(institution.display_name as string);
+        }
+    }
+
+    if (account.metadata && typeof account.metadata === 'object') {
+        const metadata = account.metadata as Record<string, unknown>;
+        for (const key of ['institution', 'institution_name', 'institution_display_name', 'provider_name']) {
+            const value = metadata[key];
+            if (typeof value === 'string') {
+                institutionCandidates.push(value);
+            }
+        }
+    }
+
+    return Array.from(
+        new Set(
+            institutionCandidates
+                .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+                .map((value) => normalizeKey(value))
+        )
+    );
+};
+
+const isCheckingAccount = (account: BackendAccount): boolean => {
+    const normalizedSubtype = getNormalizedSubtype(account);
+    const normalizedType = getNormalizedType(account);
+    const nameCandidates = getNameCandidates(account);
+
+    if (normalizedSubtype.includes('checking')) {
+        return true;
+    }
+    if (normalizedType.includes('checking')) {
+        return true;
+    }
+    return nameCandidates.some((name) => name.includes('checking'));
+};
+
+const isSavingsAccount = (account: BackendAccount): boolean => {
+    const normalizedSubtype = getNormalizedSubtype(account);
+    const normalizedType = getNormalizedType(account);
+    const nameCandidates = getNameCandidates(account);
+
+    if (normalizedSubtype.includes('savings')) {
+        return true;
+    }
+    if (normalizedType.includes('savings')) {
+        return true;
+    }
+    return nameCandidates.some((name) => name.includes('savings'));
+};
+
+const mapAccountsToIds = (accounts: BackendAccount[]): Map<string, AccountId | null> => {
+    const mapping = new Map<string, AccountId | null>();
+    const unresolved: BackendAccount[] = [];
+
+    for (const account of accounts) {
+        const resolved = resolveAccountId(account);
+        if (resolved) {
+            mapping.set(account.id, resolved);
+        } else {
+            mapping.set(account.id, null);
+            unresolved.push(account);
+        }
+    }
+
+    const fallbackStrategies: Array<{ accountId: AccountId; predicate: (account: BackendAccount) => boolean }> = [
+        { accountId: 'llcBank', predicate: isCheckingAccount },
+        { accountId: 'llcSavings', predicate: isSavingsAccount }
+    ];
+
+    for (const { accountId, predicate } of fallbackStrategies) {
+        const index = unresolved.findIndex(predicate);
+        if (index >= 0) {
+            const [account] = unresolved.splice(index, 1);
+            mapping.set(account.id, accountId);
+        }
+    }
+
+    return mapping;
+};
+
 /**
  * Resolves the UI AccountId for a backend account by checking:
  *   1. Direct ID mappings (env override wins)
@@ -124,19 +290,63 @@ const BACKEND_LAST4_TO_ACCOUNT_ID_MAP: Partial<Record<string, AccountId>> = {
  *   3. Last four digits of the account number
  */
 const resolveAccountId = (baseAccount: BackendAccount): AccountId | null => {
-    const directMatch = BACKEND_ID_TO_ACCOUNT_ID_MAP[baseAccount.id];
-    if (directMatch) {
-        return directMatch;
+    const identityCandidates = gatherIdentityCandidates(baseAccount);
+
+    for (const candidate of identityCandidates) {
+        const envMatch = ENV_BACKEND_ID_TO_ACCOUNT_ID_MAP[candidate];
+        if (envMatch) {
+            return envMatch;
+        }
     }
 
-    const nameMatch = BACKEND_NAME_TO_ACCOUNT_ID_MAP[normalizeKey(baseAccount.name)];
-    if (nameMatch) {
-        return nameMatch;
+    for (const candidate of identityCandidates) {
+        const directMatch = BACKEND_ID_TO_ACCOUNT_ID_MAP[candidate];
+        if (directMatch) {
+            return directMatch;
+        }
     }
 
-    const lastFourMatch = BACKEND_LAST4_TO_ACCOUNT_ID_MAP[normalizeKey(baseAccount.last_four)];
-    if (lastFourMatch) {
-        return lastFourMatch;
+    for (const nameCandidate of getNameCandidates(baseAccount)) {
+        const nameMatch = BACKEND_NAME_TO_ACCOUNT_ID_MAP[nameCandidate];
+        if (nameMatch) {
+            return nameMatch;
+        }
+    }
+
+    const metadataRecord =
+        baseAccount.metadata && typeof baseAccount.metadata === 'object'
+            ? (baseAccount.metadata as Record<string, unknown>)
+            : null;
+
+    const lastFourCandidates = [
+        baseAccount.last_four,
+        (baseAccount as Record<string, unknown>).last4 as string | undefined,
+        metadataRecord ? (metadataRecord['last_four'] as string | undefined) : undefined
+    ]
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map((value) => normalizeKey(value));
+
+    for (const lastFour of lastFourCandidates) {
+        const lastFourMatch = BACKEND_LAST4_TO_ACCOUNT_ID_MAP[lastFour];
+        if (lastFourMatch) {
+            return lastFourMatch;
+        }
+    }
+
+    const normalizedInstitutions = getInstitutionNames(baseAccount);
+    const normalizedIdentityStrings = identityCandidates.map((candidate) => normalizeKey(candidate));
+
+    const isTDBankAccount =
+        normalizedInstitutions.some((name) => name.includes('td bank')) ||
+        normalizedIdentityStrings.some((value) => value.includes('tdbank') || value.includes('td_bank'));
+
+    if (isTDBankAccount) {
+        if (isCheckingAccount(baseAccount)) {
+            return 'llcBank';
+        }
+        if (isSavingsAccount(baseAccount)) {
+            return 'llcSavings';
+        }
     }
 
     return null;
@@ -183,13 +393,21 @@ interface BackendAccount {
     id: string;
     name?: string;
     subtitle?: string;
-    type?: string;
+    type?: string | null;
+    subtype?: string | null;
     balance?: number | null;
     last_four?: string | null;
     provider?: string | null;
+    provider_name?: string | null;
+    institution?: unknown;
+    institution_name?: string | null;
     provider_account_id?: string | null;
     teller_account_id?: string | null;
     account_id?: string | null;
+    account_type?: string | null;
+    account_subtype?: string | null;
+    sub_type?: string | null;
+    metadata?: Record<string, unknown> | null;
     [key: string]: unknown;
 }
 
@@ -197,14 +415,16 @@ interface BackendAccount {
  * Fetches the latest read-only data (balances and transactions) from the backend.
  * @returns A promise that resolves to a partial AccountsData object containing only live bank data.
  */
-const fetchBackendData = async (): Promise<Partial<AccountsData>> => {
+export const fetchBackendData = async (): Promise<Partial<AccountsData>> => {
     await checkOnlineStatus();
     console.log(`API CALL: Fetching all accounts from GET ${API_BASE_URL}/db/accounts...`);
     
     const accountsResponse = await fetch(`${API_BASE_URL}/db/accounts`);
     const { accounts: baseAccounts } = await handleApiResponse(accountsResponse);
+    const backendAccounts = baseAccounts as BackendAccount[];
+    const accountIdLookup = mapAccountsToIds(backendAccounts);
 
-    const accountPromises = (baseAccounts as BackendAccount[]).map(async (baseAccount) => {
+    const accountPromises = backendAccounts.map(async (baseAccount) => {
         const accountId = baseAccount.id;
         const isStaticDatasetAccount = STATIC_DATASET_ACCOUNT_IDS.has(accountId);
 
@@ -236,11 +456,11 @@ const fetchBackendData = async (): Promise<Partial<AccountsData>> => {
 
         const [balanceData, transactionsData] = await Promise.all([balancePromise, transactionsPromise]);
 
-        const localAccountId = resolveAccountId(baseAccount as BackendAccount);
+        const localAccountId = accountIdLookup.get(accountId) ?? null;
 
         if (!localAccountId) {
             console.warn(
-                `Backend account ID "${baseAccount.id}" (name: "${baseAccount.name}") could not be mapped to a frontend account via ID, name, or last_four. Set VITE_BACKEND_ACCOUNT_ID_MAP if you need to link it.`
+                `Backend account ID "${baseAccount.id}" (name: "${baseAccount.name}") could not be mapped to a frontend account via metadata heuristics. Set VITE_BACKEND_ACCOUNT_ID_MAP if you need to link it.`
             );
             return [null, null];
         }
