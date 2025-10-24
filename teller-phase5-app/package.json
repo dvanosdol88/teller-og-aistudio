@@ -6,9 +6,11 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "bash test/api-integration-test.sh",
-    "test:verbose": "VERBOSE=1 bash test/api-integration-test.sh",
-    "test:local": "BASE_URL=http://localhost:3000 bash test/api-integration-test.sh"
+    "test": "node test/enrollment-proxy.test.js && bash test/api-integration-test.sh",
+    "test:proxy": "node test/enrollment-proxy.test.js",
+    "test:integration": "bash test/api-integration-test.sh",
+    "test:verbose": "node test/enrollment-proxy.test.js && VERBOSE=1 bash test/api-integration-test.sh",
+    "test:local": "node test/enrollment-proxy.test.js && BASE_URL=http://localhost:3000 bash test/api-integration-test.sh"
   },
   "engines": {
     "node": ">=18.0.0"

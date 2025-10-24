@@ -2,6 +2,7 @@
 
 # API Integration Test Suite
 # Tests the deployed manual data endpoints
+# Enrollment proxy behavior is covered by test/enrollment-proxy.test.js (mocked upstream)
 
 set -e  # Exit on error
 
