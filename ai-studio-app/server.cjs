@@ -53,6 +53,25 @@ const DATABASE_URL = process.env.DATABASE_URL;
 function buildProxyHeaders() {
   const headerMap = new Map();
 
+  const normalizeValue = (value) => {
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return '';
+    }
+
+    const startsWithQuote = trimmed.startsWith('"') || trimmed.startsWith("'");
+    const endsWithQuote = trimmed.endsWith('"') || trimmed.endsWith("'");
+    if (trimmed.length >= 2 && startsWithQuote && endsWithQuote) {
+      return trimmed.slice(1, -1).trim();
+    }
+
+    return trimmed;
+  };
+
   const addHeader = (rawKey, rawValue) => {
     if (!rawKey) return;
     const value = normalizeEnvValue(rawValue);
