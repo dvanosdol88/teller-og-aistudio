@@ -11,9 +11,38 @@ const { PgManualDataStore } = require('./lib/pgManualDataStore.cjs');
 const { ManualFieldsStore } = require('./lib/manualFieldsStore.cjs');
 const { SlugManualStore, LIABILITY_SLUGS, ASSET_SLUG } = require('./lib/slugManualStore.cjs');
 
+const DEFAULT_BACKEND_URL = 'https://teller10-15a-gc62.onrender.com';
+
+function normalizeEnvValue(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const startsWithQuote = trimmed.startsWith('"') || trimmed.startsWith("'");
+  const endsWithQuote = trimmed.endsWith('"') || trimmed.endsWith("'");
+  if (trimmed.length >= 2 && startsWithQuote && endsWithQuote) {
+    return trimmed.slice(1, -1).trim();
+  }
+
+  return trimmed;
+}
+
+const BACKEND_URL = (() => {
+  const normalized = normalizeEnvValue(process.env.BACKEND_URL);
+  if (normalized) {
+    return normalized;
+  }
+  console.warn(`[server] BACKEND_URL is not set; defaulting to ${DEFAULT_BACKEND_URL}`);
+  return DEFAULT_BACKEND_URL;
+})();
+
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BACKEND_URL = process.env.BACKEND_URL || 'https://teller10-15a.onrender.com';
 const FEATURE_MANUAL_DATA = String(process.env.FEATURE_MANUAL_DATA || '').toLowerCase() === 'true';
 const FEATURE_STATIC_DB = String(process.env.FEATURE_STATIC_DB || '').toLowerCase() === 'true';
 const MANUAL_DATA_READONLY = String(process.env.MANUAL_DATA_READONLY || '').toLowerCase() === 'true';
@@ -45,7 +74,7 @@ function buildProxyHeaders() {
 
   const addHeader = (rawKey, rawValue) => {
     if (!rawKey) return;
-    const value = normalizeValue(rawValue);
+    const value = normalizeEnvValue(rawValue);
     if (!value) return;
     const normalizedKey = String(rawKey).toLowerCase();
     headerMap.set(normalizedKey, { key: rawKey, value });
